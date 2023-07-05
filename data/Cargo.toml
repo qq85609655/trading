@@ -13,3 +13,4 @@ async-trait.workspace = true
 dirs.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+md5.workspace = true

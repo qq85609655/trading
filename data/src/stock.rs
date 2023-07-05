@@ -40,8 +40,8 @@ pub struct Stock {
 
 impl Stock {
     pub fn new<T>(name: T, symbol: T) -> Self
-        where
-            T: ToString,
+    where
+        T: ToString,
     {
         Self { symbol: symbol.to_string(), name: name.to_string() }
     }
@@ -78,7 +78,6 @@ deref! {
 }
 
 impl Stocks {
-
     /// 加载的列表进行过了
     pub fn filter(mut self, filter: Option<String>) -> Self {
         let Some(filter) = filter else {
@@ -94,11 +93,14 @@ impl Stocks {
 
     /// 模糊搜索股票并返回股票列表，搜索可根据名称和代码进行
     pub fn search(&self, filter: &str) -> Vec<&Stock> {
-        self.0.iter().filter(|&item| {
-            let symbol = item.symbol.clone();
-            let name = item.name.clone();
-            symbol.contains(&filter) || name.contains(&filter)
-        }).collect()
+        self.0
+            .iter()
+            .filter(|&item| {
+                let symbol = item.symbol.clone();
+                let name = item.name.clone();
+                symbol.contains(&filter) || name.contains(&filter)
+            })
+            .collect()
     }
 
     /// 随机一直股票，当且仅当股票列表不为空时，才会返回股票
@@ -138,7 +140,6 @@ mod tests {
 
         let f = stocks.search("60");
         assert_eq!(f.len(), 3);
-
 
         let r = stocks.random();
         assert!(r.is_some());
