@@ -1,0 +1,34 @@
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
+[tasks.format]
+install_crate = "rustfmt"
+command = "cargo"
+args = ["fmt", "-v"]
+
+[tasks.ci]
+dependencies = [
+    "test"
+]
+
+[tasks.test]
+command = "cargo"
+args = ["test", "-v", "--all-features", "--doc"]
+
+[tasks.fix]
+command = "cargo"
+args = [
+    "fix",
+    "--workspace",
+    "-v",
+    "--allow-dirty",
+    "--allow-staged",
+    "--tests"
+]
+
+[tasks.hook]
+dependencies = [
+    "fix",
+    "format",
+    "ci"
+]
