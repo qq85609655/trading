@@ -6,8 +6,14 @@ install_crate = "rustfmt"
 command = "cargo"
 args = ["fmt", "-v"]
 
+[tasks.format-check]
+install_crate = "rustfmt"
+command = "cargo"
+args = ["fmt", "--", "--check"]
+
 [tasks.ci]
 dependencies = [
+    "format-check",
     "test"
 ]
 
@@ -29,6 +35,6 @@ args = [
 [tasks.hook]
 dependencies = [
     "fix",
-    "format",
+    "format-check",
     "ci"
 ]

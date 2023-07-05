@@ -14,3 +14,5 @@ dirs.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 md5.workspace = true
+serde_json.workspace = true
+tracing.workspace = true

@@ -6,14 +6,23 @@ pub mod local {
 
     use anyhow::Context;
 
-    use crate::{Stock, Stocks, StocksLoader};
     use crate::stock::GetSymbolCode;
+    use crate::{Stock, Stocks, StocksLoader};
 
     pub fn data_dir() -> anyhow::Result<PathBuf> {
         let dir = dirs::data_local_dir().ok_or(anyhow::anyhow!("data local dir not found"))?;
         let dir = dir.join("la.renzhen.trading");
         if !dir.exists() {
             std::fs::create_dir_all(&dir).context("Failed to create data local dir")?;
+        }
+        Ok(dir)
+    }
+
+    pub fn config_dir() -> anyhow::Result<PathBuf> {
+        let dir = dirs::home_dir().ok_or(anyhow::anyhow!("config dir not found"))?;
+        let dir = dir.join(".config/la.renzhen.trading");
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir).context("Failed to create config dir")?;
         }
         Ok(dir)
     }
@@ -89,18 +98,21 @@ pub mod local {
 
 /// 远程加载器
 pub mod remote {
+    use std::path::PathBuf;
+
+    use anyhow::Context;
     use reqwest::{header, Method, RequestBuilder, Response};
     use serde::{Deserialize, Serialize};
 
     use crate::{Stock, Stocks};
 
     pub mod headers {
-        pub const NAME: &str = "X-Trading-Name";
-        pub const VERSION: &str = "X-Trading-Version";
-        pub const PLATFORM: &str = "X-Trading-Platform";
-        pub const AK: &str = "X-Trading-AccessKey";
-        pub const SIGN: &str = "X-Trading-Sign";
-        pub const TIMESTAMP: &str = "X-Trading-Timestamp";
+        pub const NAME: &str = "x-trading-name";
+        pub const VERSION: &str = "x-trading-version";
+        pub const PLATFORM: &str = "x-trading-platform";
+        pub const AK: &str = "x-trading-access-key";
+        pub const SIGN: &str = "x-trading-sign";
+        pub const TIMESTAMP: &str = "x-trading-timestamp";
     }
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -137,12 +149,12 @@ pub mod remote {
     }
 
     impl StocksRemoteLoader {
-        pub fn new<P: CredentialProvider>(host: &str, timeout: Option<std::time::Duration>, provider: P) -> anyhow::Result<Self> {
-            Ok(Self {
-                host: host.to_string(),
-                credential: provider.credential()?,
-                timeout,
-            })
+        pub fn new<P: CredentialProvider>(
+            host: &str,
+            timeout: Option<std::time::Duration>,
+            provider: P,
+        ) -> anyhow::Result<Self> {
+            Ok(Self { host: host.to_string(), credential: provider.credential()?, timeout })
         }
 
         fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
@@ -180,7 +192,7 @@ pub mod remote {
             let timestamp = chrono::Local::now().timestamp_millis();
             req = req.header(headers::TIMESTAMP, timestamp);
             if let Some(credential) = &self.credential {
-                let sign = sign(env!("CARGO_PKG_VERSION"), &credential.access_key, data, &timestamp.to_string());
+                let sign = sign(env!("CARGO_PKG_VERSION"), &credential.secret_key, data, &timestamp.to_string());
                 req = req.header(headers::AK, credential.access_key.as_str());
                 req = req.header(headers::SIGN, sign);
             }
@@ -188,11 +200,120 @@ pub mod remote {
         }
     }
 
+    /// 静态凭证提供者
+    pub struct StaticCredentialProvider(Credential);
+
+    impl CredentialProvider for StaticCredentialProvider {
+        fn credential(&self) -> anyhow::Result<Option<Credential>> {
+            Ok(Some(self.0.clone()))
+        }
+    }
+
+    pub struct EnvCredentialProvider {
+        access_key_env: String,
+        secret_key_env: String,
+    }
+
+    impl EnvCredentialProvider {
+        pub fn new(access_key_env: &str, secret_key_env: &str) -> Self {
+            Self {
+                access_key_env: access_key_env.to_string(),
+                secret_key_env: secret_key_env.to_string(),
+            }
+        }
+    }
+
+    impl Default for EnvCredentialProvider {
+        fn default() -> Self {
+            Self::new("TRADING_ACCESS_KEY", "TRADING_SECRET_KEY")
+        }
+    }
+
+    impl CredentialProvider for EnvCredentialProvider {
+        fn credential(&self) -> anyhow::Result<Option<Credential>> {
+            tracing::debug!("load credential from env");
+            let access_key = std::env::var(&self.access_key_env)
+                .context(format!("read access_key from env: {}", self.access_key_env))?;
+            let secret_key = std::env::var(&self.secret_key_env)
+                .context(format!("read secret_key from env: {}", self.secret_key_env))?;
+            Ok(Some(Credential { access_key, secret_key }))
+        }
+    }
+
+    pub struct FileCredentialProvider {
+        path: PathBuf,
+    }
+
+    impl FileCredentialProvider {
+        pub fn new(path: impl Into<PathBuf>) -> Self {
+            Self { path: path.into() }
+        }
+    }
+
+    impl Default for FileCredentialProvider {
+        fn default() -> Self {
+            let path = super::local::config_dir().unwrap().join("credential.json");
+            Self::new(path)
+        }
+    }
+
+    impl CredentialProvider for FileCredentialProvider {
+        fn credential(&self) -> anyhow::Result<Option<Credential>> {
+            tracing::debug!("load credential from {:?}", self.path);
+            let content = std::fs::read_to_string(&self.path)?;
+            let credential = serde_json::from_str::<Credential>(&content).context("deserialize credential file")?;
+            Ok(Some(credential))
+        }
+    }
+
+    pub struct MultiCredentialProvider {
+        providers: Vec<Box<dyn CredentialProvider>>,
+        must_found: bool,
+    }
+
+    impl Default for MultiCredentialProvider {
+        fn default() -> Self {
+            Self {
+                providers: vec![
+                    Box::new(EnvCredentialProvider::default()),
+                    Box::new(FileCredentialProvider::default()),
+                ],
+                must_found: false,
+            }
+        }
+    }
+
+    impl MultiCredentialProvider {
+        pub fn new(providers: Vec<Box<dyn CredentialProvider>>, must_found: bool) -> Self {
+            Self { providers, must_found }
+        }
+    }
+
+    impl CredentialProvider for MultiCredentialProvider {
+        fn credential(&self) -> anyhow::Result<Option<Credential>> {
+            for provider in &self.providers {
+                match provider.credential() {
+                    Err(err) => {
+                        tracing::warn!("load credential failed: {}", err);
+                    }
+                    Ok(None) => {}
+                    Ok(Some(credential)) => return Ok(Some(credential)),
+                }
+            }
+
+            if self.must_found {
+                anyhow::bail!("credential not found");
+            }
+
+            Ok(None)
+        }
+    }
+
     #[async_trait::async_trait]
     impl crate::StocksLoader for StocksRemoteLoader {
         async fn stocks(&self) -> anyhow::Result<crate::stock::Stocks> {
             let req = self.request(Method::GET, "/stocks");
-            let req = self.sign(req, "");
+            let req = self.sign(req, "/stocks");
 
             let resp = req.send().await?;
             if self.is_json_response(&resp) {
@@ -214,9 +335,12 @@ pub mod remote {
         #[tokio::test]
         #[ignore]
         async fn load_stocks() {
-            let loader = StocksRemoteLoader::default();
-            // let stocks = loader.stocks().await;
-            // assert!(stocks.is_err(), "load chart error");
+            let mut loader = StocksRemoteLoader::default();
+            let stocks = loader.stocks().await;
+            assert!(stocks.is_err(), "load chart error");
+
+            let provider = MultiCredentialProvider::default();
+            loader.credential = provider.credential().unwrap();
 
             let stocks = loader.stocks().await;
             assert!(stocks.is_ok(), "load chart error");
