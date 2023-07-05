@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::stock::GetSymbolCode;
 use crate::{deref, Percent};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -120,12 +121,12 @@ impl Chart {
 
 #[async_trait::async_trait]
 pub trait Loader {
-    async fn chart(&self, symbol: &str) -> anyhow::Result<Chart>;
+    async fn chart(&self, symbol: impl GetSymbolCode) -> anyhow::Result<Chart>;
 }
 
 #[async_trait::async_trait]
 pub trait BarLoader {
-    async fn current(&self, symbol: &str) -> anyhow::Result<Bar>;
+    async fn current(&self, symbol: impl GetSymbolCode) -> anyhow::Result<Bar>;
 }
 
 #[async_trait::async_trait]

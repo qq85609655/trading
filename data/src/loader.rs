@@ -27,23 +27,6 @@ pub mod local {
         Ok(dir)
     }
 
-    #[allow(dead_code)]
-    fn stock(symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
-        let symbol = symbol.symbol();
-        let (s1, s2) = (&symbol[..2], &symbol[2..4]);
-        storage(format!("stocks/{}/{}/{}.csv", s1, s2, symbol).as_str())
-    }
-
-    fn stocks() -> anyhow::Result<PathBuf> {
-        storage("stocks.csv")
-    }
-
-    pub fn storage(filename: &str) -> anyhow::Result<PathBuf> {
-        let mut path = data_dir()?;
-        path.push(filename);
-        Ok(path)
-    }
-
     pub(crate) fn parse_stocks_data(content: String) -> anyhow::Result<Stocks> {
         let mut stocks = vec![];
         for line in content.lines().skip(1) {
@@ -56,12 +39,43 @@ pub mod local {
     }
 
     #[derive(Debug, Clone)]
-    pub struct StocksLocalLoader;
+    pub struct LocalLoader {
+        base_dir: PathBuf,
+    }
+
+    impl LocalLoader {
+        fn default() -> anyhow::Result<Self> {
+            data_dir().and_then(|path| LocalLoader::new(path))
+        }
+
+        pub fn new(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
+            let path = path.into();
+            let test_writeable = path.join("test");
+            std::fs::write(&test_writeable, "").context("Failed to write local folder")?;
+            std::fs::remove_file(&test_writeable).context("Failed to remove local folder")?;
+
+            Ok(Self { base_dir: path.into() })
+        }
+
+        pub fn stock_path(&self, symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
+            let symbol = symbol.symbol();
+            let (s1, s2) = (&symbol[..2], &symbol[2..4]);
+            self.storage(format!("stocks/{}/{}/{}.csv", s1, s2, symbol))
+        }
+
+        pub fn stocks_path(&self) -> anyhow::Result<PathBuf> {
+            self.storage("stocks.csv")
+        }
+
+        pub fn storage(&self, append: impl AsRef<str>) -> anyhow::Result<PathBuf> {
+            Ok(self.base_dir.join(append.as_ref()))
+        }
+    }
 
     #[async_trait::async_trait]
-    impl StocksLoader for StocksLocalLoader {
+    impl StocksLoader for LocalLoader {
         async fn stocks(&self) -> anyhow::Result<Stocks> {
-            let path = stocks()?;
+            let path = self.stocks_path()?;
             let content = tokio::fs::read_to_string(path).await.context("Failed to read stock file")?;
             parse_stocks_data(content)
         }
@@ -77,17 +91,18 @@ pub mod local {
             let path = data_dir().unwrap();
             println!("data_dir: {:?}", path);
 
-            let path = stock("600444").unwrap();
+            let loader = LocalLoader::default().unwrap();
+            let path = loader.stock_path("600444").unwrap();
             println!("stock: {:?}", path);
 
-            let path = stocks().unwrap();
+            let path = loader.stocks_path().unwrap();
             println!("stocks: {:?}", path);
         }
 
         #[tokio::test]
         #[ignore]
         async fn load_stocks() {
-            let loader = StocksLocalLoader;
+            let loader = LocalLoader::default().unwrap();
             let stocks = loader.stocks().await;
             assert!(stocks.is_ok(), "load chart error");
             let stocks = stocks.unwrap();
@@ -126,13 +141,13 @@ pub mod remote {
     }
 
     #[derive(Debug, Clone)]
-    pub struct StocksRemoteLoader {
+    pub struct RemoteLoader {
         pub host: String,
         pub credential: Option<Credential>,
         pub timeout: Option<std::time::Duration>,
     }
 
-    impl Default for StocksRemoteLoader {
+    impl Default for RemoteLoader {
         fn default() -> Self {
             Self {
                 host: "http://127.0.0.1:18686/api/data".to_string(),
@@ -148,7 +163,7 @@ pub mod remote {
         format!("{:x}", data)
     }
 
-    impl StocksRemoteLoader {
+    impl RemoteLoader {
         pub fn new<P: CredentialProvider>(
             host: &str,
             timeout: Option<std::time::Duration>,
@@ -310,7 +325,7 @@ pub mod remote {
     }
 
     #[async_trait::async_trait]
-    impl crate::StocksLoader for StocksRemoteLoader {
+    impl crate::StocksLoader for RemoteLoader {
         async fn stocks(&self) -> anyhow::Result<crate::stock::Stocks> {
             let req = self.request(Method::GET, "/stocks");
             let req = self.sign(req, "/stocks");
@@ -335,7 +350,7 @@ pub mod remote {
         #[tokio::test]
         #[ignore]
         async fn load_stocks() {
-            let mut loader = StocksRemoteLoader::default();
+            let mut loader = RemoteLoader::default();
             let stocks = loader.stocks().await;
             assert!(stocks.is_err(), "load chart error");
 
