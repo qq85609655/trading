@@ -35,6 +35,6 @@ args = [
 [tasks.hook]
 dependencies = [
     "fix",
-    "format-check",
+    "format",
     "ci"
 ]

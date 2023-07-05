@@ -232,6 +232,26 @@ pub mod remote {
             Ok(Self { host: host.to_string(), credential: provider.credential()?, timeout })
         }
 
+        pub fn with_host<T: AsRef<str>>(mut self, host: T) -> Self {
+            self.host = host.as_ref().to_string();
+            self
+        }
+        pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+            self.timeout = Some(timeout);
+            self
+        }
+
+        #[allow(dead_code)]
+        pub fn with_provider<T: CredentialProvider>(mut self, provider: T) -> anyhow::Result<Self> {
+            self.credential = provider.credential()?;
+            Ok(self)
+        }
+
+        pub fn with_credential(mut self, credential: Credential) -> Self {
+            self.credential = Some(credential);
+            self
+        }
+
         fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
             let url = format!("{}{}", self.host, path);
             let mut req = reqwest::Client::new().request(method, url);
@@ -511,6 +531,19 @@ pub mod remote {
             assert!(stocks.is_ok(), "load chart error");
             let stocks = stocks.unwrap();
             assert!(stocks.len() > 0, "load chart error");
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn load_market() {
+            let loader = RemoteLoader::default()
+                .with_provider(MultiCredentialProvider::default())
+                .unwrap();
+
+            let market = loader.market().await;
+            assert!(market.is_ok(), "load chart error");
+            let market = market.unwrap();
+            assert!(market.len() > 0, "load chart error");
         }
     }
 }
