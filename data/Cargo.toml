@@ -16,3 +16,11 @@ reqwest.workspace = true
 md5.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+
+[dependencies.iced]
+workspace = true
+optional = true
+
+[features]
+full = ["iced_color"]
+iced_color = ["iced"]

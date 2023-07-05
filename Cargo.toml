@@ -16,3 +16,14 @@ reqwest = { version = "0.11.18", features = ["json", "cookies", "gzip"] }
 md5 = "0.7.0"
 serde_json = "1.0.100"
 tracing = { version = "0.1.37", features = ["log"] }
+
+[workspace.dependencies.iced]
+version = "0.9.0"
+default-features = false
+features = ["canvas", "debug", "palette", "glow", "image", "image_rs", "tokio", "default_system_font", "smol", "svg", "system"]
+
+[workspace.dependencies.plotters]
+version = "0.3.4"
+default-features = false
+features = ["all_elements", "all_series", "full_palette", "chrono", "datetime"]
+
