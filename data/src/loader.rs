@@ -2,12 +2,13 @@
 
 /// 本地数据加载器
 pub mod local {
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use anyhow::Context;
 
     use crate::stock::GetSymbolCode;
-    use crate::{Stock, Stocks, StocksLoader};
+    use crate::{Bar, BarLoader, Chart, ChartLoader, MarketCurrentLoader, Stock, Stocks, StocksLoader};
 
     pub fn data_dir() -> anyhow::Result<PathBuf> {
         let dir = dirs::data_local_dir().ok_or(anyhow::anyhow!("data local dir not found"))?;
@@ -81,6 +82,63 @@ pub mod local {
         }
     }
 
+    #[async_trait::async_trait]
+    impl ChartLoader for LocalLoader {
+        async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart> {
+            let path = self.stock_path(symbol.symbol())?;
+            let content = tokio::fs::read_to_string(&path).await.context(format!(
+                "[{}] read stock chart file: {}",
+                symbol.symbol(),
+                path.display()
+            ))?;
+            let lines = content.lines().skip(1);
+
+            let mut chart = Chart::default();
+            let mut yesterday = 0.0;
+            for line in lines.into_iter() {
+                if line.is_empty() {
+                    continue;
+                }
+                let mut fields = line.split(',');
+                let mut bar = Bar::new(fields.next().context("not found date")?);
+                bar.open = fields.next().context("not found open")?.parse::<f64>().context("parse open")?;
+                bar.high = fields.next().context("not found high")?.parse::<f64>().context("parse high")?;
+                bar.low = fields.next().context("not found low")?.parse::<f64>().context("parse low")?;
+                bar.close = fields
+                    .next()
+                    .context("not found close")?
+                    .parse::<f64>()
+                    .context("parse close")?;
+                bar.volume = fields
+                    .next()
+                    .context("not found volume")?
+                    .parse::<f64>()
+                    .context("parse volume")?;
+                if !bar.is_ok() {
+                    continue;
+                }
+                bar.yesterday = yesterday;
+                yesterday = bar.close;
+                chart.push(bar);
+            }
+            Ok(chart)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MarketCurrentLoader for LocalLoader {
+        async fn market(&self) -> anyhow::Result<HashMap<String, Bar>> {
+            anyhow::bail!("not support")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BarLoader for LocalLoader {
+        async fn current(&self, _symbol: impl GetSymbolCode + Send) -> anyhow::Result<Bar> {
+            anyhow::bail!("not suppert")
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -113,13 +171,15 @@ pub mod local {
 
 /// 远程加载器
 pub mod remote {
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use anyhow::Context;
     use reqwest::{header, Method, RequestBuilder, Response};
     use serde::{Deserialize, Serialize};
 
-    use crate::{Stock, Stocks};
+    use crate::stock::GetSymbolCode;
+    use crate::{Bar, BarLoader, MarketCurrentLoader, Stock, Stocks};
 
     pub mod headers {
         pub const NAME: &str = "x-trading-name";
@@ -338,6 +398,96 @@ pub mod remote {
                 let content = resp.text().await?;
                 super::local::parse_stocks_data(content)
             }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MarketCurrentLoader for RemoteLoader {
+        async fn market(&self) -> anyhow::Result<HashMap<String, Bar>> {
+            let req = self.request(Method::GET, "/market");
+            let req = self.sign(req, "/market");
+
+            let resp = req.send().await?;
+            if self.is_json_response(&resp) {
+                let output = resp.json::<HashMap<String, Bar>>().await?;
+                return Ok(output);
+            }
+            let mut outputs = HashMap::new();
+
+            let content = resp.text().await?;
+
+            let lines = content.lines().skip(1);
+            for line in lines.into_iter() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let mut fields = line.split(',');
+                let name = fields.next().context("not found name")?;
+
+                let mut bar = Bar::new(fields.next().context("not found date")?);
+                bar.open = fields.next().context("not found open")?.parse::<f64>().context("parse open")?;
+                bar.high = fields.next().context("not found high")?.parse::<f64>().context("parse high")?;
+                bar.low = fields.next().context("not found low")?.parse::<f64>().context("parse low")?;
+                bar.close = fields
+                    .next()
+                    .context("not found close")?
+                    .parse::<f64>()
+                    .context("parse close")?;
+                bar.volume = fields
+                    .next()
+                    .context("not found volume")?
+                    .parse::<f64>()
+                    .context("parse volume")?;
+                if !bar.is_ok() {
+                    continue;
+                }
+                outputs.insert(name.to_string(), bar);
+            }
+            Ok(outputs)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BarLoader for RemoteLoader {
+        async fn current(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Bar> {
+            let uri = format!("/current/{}", symbol.symbol());
+            let req = self.request(Method::GET, &uri);
+            let req = self.sign(req, &uri);
+            let resp = req.send().await?;
+            if self.is_json_response(&resp) {
+                let output = resp.json::<Bar>().await?;
+                return Ok(output);
+            }
+            let content = resp.text().await?;
+            let Some(line) = content.lines().skip(1).next() else {
+                anyhow::bail!("not found");
+            };
+
+            if line.is_empty() {
+                anyhow::bail!("closed");
+            }
+
+            let mut fields = line.split(',');
+            let _name = fields.next().context("not found name")?;
+            let mut bar = Bar::new(fields.next().context("not found date")?);
+            bar.open = fields.next().context("not found open")?.parse::<f64>().context("parse open")?;
+            bar.high = fields.next().context("not found high")?.parse::<f64>().context("parse high")?;
+            bar.low = fields.next().context("not found low")?.parse::<f64>().context("parse low")?;
+            bar.close = fields
+                .next()
+                .context("not found close")?
+                .parse::<f64>()
+                .context("parse close")?;
+            bar.volume = fields
+                .next()
+                .context("not found volume")?
+                .parse::<f64>()
+                .context("parse volume")?;
+            if !bar.is_ok() {
+                anyhow::bail!("invailed data");
+            }
+            Ok(bar)
         }
     }
 

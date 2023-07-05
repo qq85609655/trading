@@ -54,7 +54,7 @@ impl Bar {
     }
 
     pub fn is_ok(&self) -> bool {
-        self.open != 0.0 && self.high != 0.0 && self.low != 0.0 && self.close != 0.0
+        self.open > 0.0 && self.high > 0.0 && self.low > 0.0 && self.close > 0.0
     }
 
     pub fn red(&self) -> bool {
@@ -121,32 +121,15 @@ impl Chart {
 
 #[async_trait::async_trait]
 pub trait Loader {
-    async fn chart(&self, symbol: impl GetSymbolCode) -> anyhow::Result<Chart>;
+    async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart>;
 }
 
 #[async_trait::async_trait]
 pub trait BarLoader {
-    async fn current(&self, symbol: impl GetSymbolCode) -> anyhow::Result<Bar>;
+    async fn current(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Bar>;
 }
 
 #[async_trait::async_trait]
 pub trait MarketCurrentLoader {
     async fn market(&self) -> anyhow::Result<HashMap<String, Bar>>;
-}
-
-#[async_trait::async_trait]
-impl<T> MarketCurrentLoader for T
-where
-    T: BarLoader + crate::stock::Loader + std::marker::Sync,
-{
-    async fn market(&self) -> anyhow::Result<HashMap<String, Bar>> {
-        let mut items = HashMap::new();
-        let stocks = self.stocks().await?;
-        for stock in stocks.value().into_iter() {
-            if let Ok(bar) = self.current(&stock.symbol).await {
-                items.insert(stock.symbol, bar);
-            }
-        }
-        Ok(items)
-    }
 }
