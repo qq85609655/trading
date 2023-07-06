@@ -3,7 +3,8 @@
 /// 本地数据加载器
 pub mod local {
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::fmt::Write;
+    use std::path::{Path, PathBuf};
 
     use anyhow::Context;
 
@@ -39,13 +40,22 @@ pub mod local {
         Ok(Stocks::new(stocks))
     }
 
+    pub fn write_stocks_data<P: AsRef<Path>>(path: P, stocks: &Stocks) -> anyhow::Result<()> {
+        let mut content = String::from("股票代码,股票名称");
+        for stock in stocks.iter() {
+            content.write_str(format!("\n{},{}", stock.symbol, stock.name).as_str())?;
+        }
+        std::fs::write(path, content).context("write file")?;
+        Ok(())
+    }
+
     #[derive(Debug, Clone)]
     pub struct LocalLoader {
         base_dir: PathBuf,
     }
 
     impl LocalLoader {
-        fn default() -> anyhow::Result<Self> {
+        pub fn base() -> anyhow::Result<Self> {
             data_dir().and_then(|path| LocalLoader::new(path))
         }
 
@@ -149,7 +159,7 @@ pub mod local {
             let path = data_dir().unwrap();
             println!("data_dir: {:?}", path);
 
-            let loader = LocalLoader::default().unwrap();
+            let loader = LocalLoader::base().unwrap();
             let path = loader.stock_path("600444").unwrap();
             println!("stock: {:?}", path);
 
@@ -160,7 +170,7 @@ pub mod local {
         #[tokio::test]
         #[ignore]
         async fn load_stocks() {
-            let loader = LocalLoader::default().unwrap();
+            let loader = LocalLoader::base().unwrap();
             let stocks = loader.stocks().await;
             assert!(stocks.is_ok(), "load chart error");
             let stocks = stocks.unwrap();

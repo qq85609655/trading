@@ -1,10 +1,12 @@
-pub use calculate::percent::Percent;
-pub use chart::{Bar, BarLoader, Chart, Loader as ChartLoader, MarketCurrentLoader};
-pub use loader::{local::LocalLoader, remote::RemoteLoader};
-pub use stock::{Loader as StocksLoader, Stock, Stocks};
+pub use calculate::*;
+pub use chart::*;
+pub use days::{holidays::*, *};
+pub use loader::{local::*, remote::*};
+pub use stock::*;
 
 mod calculate;
 mod chart;
+mod days;
 pub mod loader;
 mod macros;
 mod stock;

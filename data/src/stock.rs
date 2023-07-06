@@ -68,7 +68,7 @@ impl Display for Stock {
 }
 
 #[async_trait::async_trait]
-pub trait Loader {
+pub trait StocksLoader {
     async fn stocks(&self) -> anyhow::Result<Stocks>;
 }
 

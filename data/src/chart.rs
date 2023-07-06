@@ -120,7 +120,7 @@ impl Chart {
 }
 
 #[async_trait::async_trait]
-pub trait Loader {
+pub trait ChartLoader {
     async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart>;
 }
 

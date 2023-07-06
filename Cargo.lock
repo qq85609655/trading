@@ -741,6 +741,7 @@ dependencies = [
  "dirs",
  "fastrand 2.0.0",
  "iced",
+ "lazy_static",
  "md5",
  "reqwest",
  "serde",
