@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    "data"
-]
+members = ["data", "ext"]
 
 [workspace.dependencies]
 anyhow = { version = "1.0.71", features = ["backtrace"] }
@@ -21,5 +19,16 @@ lazy_static = "1.4.0"
 [workspace.dependencies.iced]
 version = "0.9.0"
 default-features = false
-features = ["canvas", "debug", "palette", "glow", "image", "image_rs", "tokio", "default_system_font", "smol", "svg", "system"]
-
+features = [
+    "canvas",
+    "debug",
+    "palette",
+    "glow",
+    "image",
+    "image_rs",
+    "tokio",
+    "default_system_font",
+    "smol",
+    "svg",
+    "system",
+]
