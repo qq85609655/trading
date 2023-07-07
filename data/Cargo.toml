@@ -25,3 +25,6 @@ optional = true
 [features]
 full = ["iced_color"]
 iced_color = ["iced"]
+
+[dev-dependencies]
+tokio.workspace = true

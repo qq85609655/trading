@@ -68,7 +68,7 @@ pub mod local {
             Ok(Self { base_dir: path.into() })
         }
 
-        pub fn stock_path(&self, symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
+        pub fn stock_chart_path(&self, symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
             let symbol = symbol.symbol();
             let (s1, s2) = (&symbol[..2], &symbol[2..4]);
             self.storage(format!("stocks/{}/{}/{}.csv", s1, s2, symbol))
@@ -95,7 +95,7 @@ pub mod local {
     #[async_trait::async_trait]
     impl ChartLoader for LocalLoader {
         async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart> {
-            let path = self.stock_path(symbol.symbol())?;
+            let path = self.stock_chart_path(symbol.symbol())?;
             let content = tokio::fs::read_to_string(&path).await.context(format!(
                 "[{}] read stock chart file: {}",
                 symbol.symbol(),
@@ -160,7 +160,7 @@ pub mod local {
             println!("data_dir: {:?}", path);
 
             let loader = LocalLoader::base().unwrap();
-            let path = loader.stock_path("600444").unwrap();
+            let path = loader.stock_chart_path("600444").unwrap();
             println!("stock: {:?}", path);
 
             let path = loader.stocks_path().unwrap();
@@ -189,7 +189,7 @@ pub mod remote {
     use serde::{Deserialize, Serialize};
 
     use crate::stock::GetSymbolCode;
-    use crate::{Bar, BarLoader, MarketCurrentLoader, Stock, Stocks};
+    use crate::{Bar, BarLoader, Chart, ChartLoader, MarketCurrentLoader, Stock, Stocks};
 
     pub mod headers {
         pub const NAME: &str = "x-trading-name";
@@ -290,6 +290,13 @@ pub mod remote {
                 }
             }
             false
+        }
+
+        fn is_ok(&self, resp: &Response) -> anyhow::Result<()> {
+            if resp.status().is_success() {
+                return Ok(());
+            }
+            anyhow::bail!("http error: {}", resp.status().to_string())
         }
 
         /// 添加验证信息
@@ -421,6 +428,7 @@ pub mod remote {
             let req = self.sign(req, "/stocks");
 
             let resp = req.send().await?;
+            self.is_ok(&resp)?;
             if self.is_json_response(&resp) {
                 let items = resp.json::<Vec<Stock>>().await?;
                 return Ok(Stocks::new(items));
@@ -438,6 +446,7 @@ pub mod remote {
             let req = self.sign(req, "/market");
 
             let resp = req.send().await?;
+            self.is_ok(&resp)?;
             if self.is_json_response(&resp) {
                 let output = resp.json::<HashMap<String, Bar>>().await?;
                 return Ok(output);
@@ -485,6 +494,7 @@ pub mod remote {
             let req = self.request(Method::GET, &uri);
             let req = self.sign(req, &uri);
             let resp = req.send().await?;
+            self.is_ok(&resp)?;
             if self.is_json_response(&resp) {
                 let output = resp.json::<Bar>().await?;
                 return Ok(output);
@@ -521,6 +531,50 @@ pub mod remote {
         }
     }
 
+    #[async_trait::async_trait]
+    impl ChartLoader for RemoteLoader {
+        async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart> {
+            let uri = format!("/chart/{}", symbol.symbol());
+            let req = self.request(Method::GET, &uri);
+            let req = self.sign(req, &uri);
+            let resp = req.send().await?;
+            self.is_ok(&resp)?;
+            if self.is_json_response(&resp) {
+                let output = resp.json::<Vec<Bar>>().await?;
+                return Ok(Chart::new(output));
+            }
+            let mut items = vec![];
+            let content = resp.text().await?;
+            let lines = content.lines().skip(1);
+            for line in lines.into_iter() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let mut fields = line.split(',');
+                let mut bar = Bar::new(fields.next().context("not found date")?);
+                bar.open = fields.next().context("not found open")?.parse::<f64>().context("parse open")?;
+                bar.high = fields.next().context("not found high")?.parse::<f64>().context("parse high")?;
+                bar.low = fields.next().context("not found low")?.parse::<f64>().context("parse low")?;
+                bar.close = fields
+                    .next()
+                    .context("not found close")?
+                    .parse::<f64>()
+                    .context("parse close")?;
+                bar.volume = fields
+                    .next()
+                    .context("not found volume")?
+                    .parse::<f64>()
+                    .context("parse volume")?;
+                if !bar.is_ok() {
+                    continue;
+                }
+                items.push(bar);
+            }
+            Ok(Chart::new(items))
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use crate::StocksLoader;
@@ -551,9 +605,23 @@ pub mod remote {
                 .unwrap();
 
             let market = loader.market().await;
-            assert!(market.is_ok(), "load chart error");
+            assert!(market.is_ok(), "load market error");
             let market = market.unwrap();
-            assert!(market.len() > 0, "load chart error");
+            assert!(market.len() > 0, "load market length is 0");
+
+            let current = loader.current("601888").await;
+            dbg!(&current);
+            assert!(current.is_ok(), "load current error");
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn load_chart() {
+            let loader = RemoteLoader::default()
+                .with_provider(MultiCredentialProvider::default())
+                .unwrap();
+            let chart = loader.chart("601888").await;
+            assert!(chart.is_ok(), "load chart error");
         }
     }
 }
