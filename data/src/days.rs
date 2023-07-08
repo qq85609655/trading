@@ -1,6 +1,8 @@
+use anyhow::Context;
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Sub};
+use std::str::FromStr;
 
 use chrono::{DateTime, Duration, DurationRound, Local, TimeZone, Timelike};
 
@@ -159,18 +161,22 @@ deref! {
     pub struct TradingDay(DateTime<Local>);
 }
 
-impl TradingDay {
-    pub fn from_str<T: AsRef<str>>(value: T) -> Self {
-        let datetime = Local
-            .datetime_from_str(format!("{} 00:00:00", value.as_ref()).as_str(), "%Y-%m-%d %H:%M:%S")
-            .expect("date value error");
-        TradingDay::new(datetime)
-    }
+impl FromStr for TradingDay {
+    type Err = chrono::ParseError;
 
-    pub fn trading(day: Option<String>) -> Self {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let date = Local
+            .datetime_from_str(format!("{} 00:00:00", s).as_str(), "%Y-%m-%d %H:%M:%S")?;
+        let date = holidays::to_trading_day(date, Ordering::Less);
+        Ok(TradingDay::new(date))
+    }
+}
+
+impl TradingDay {
+    pub fn trading(day: Option<String>) -> anyhow::Result<Self> {
         match day {
-            Some(day) => Self::from_str(day),
-            None => TradingDay::latest(),
+            Some(day) => FromStr::from_str(&day).context("Invalid trading day"),
+            None => Ok(TradingDay::latest()),
         }
     }
 
@@ -207,19 +213,23 @@ impl TradingDay {
         days
     }
 
-    pub fn days(&self, other: &str) -> usize {
-        self.between(&TradingDay::from_str(other))
+    pub fn days(&self, other: &TradingDay) -> usize {
+        self.between(&other)
     }
 
-    #[must_use]
+    #[allow(unused)]
     pub fn open_time(&self) -> Self {
         let open = self.0.with_hour(9).unwrap();
         Self(open.with_minute(30).unwrap())
     }
 
-    #[must_use]
     pub fn close_time(&self) -> Self {
         Self(self.0.with_hour(15).unwrap())
+    }
+
+    pub fn is_now_closed(&self) -> bool {
+        let now = Local::now();
+        self.close_time().value().lt(&now)
     }
 
     #[inline]

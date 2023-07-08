@@ -732,25 +732,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "data"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "dirs",
- "fastrand 2.0.0",
- "iced",
- "lazy_static",
- "md5",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "data-url"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -956,14 +937,6 @@ dependencies = [
  "rayon-core",
  "smallvec",
  "zune-inflate",
-]
-
-[[package]]
-name = "ext"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "tokio",
 ]
 
 [[package]]
@@ -3888,6 +3861,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0955b8137a1df6f1a2e9a37d8a6656291ff0297c1a97c24e0d8425fe2312f79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "trading-data"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "fastrand 2.0.0",
+ "iced",
+ "lazy_static",
+ "md5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "trading-ext"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tokio",
 ]
 
 [[package]]
