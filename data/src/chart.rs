@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::{deref, Percent, Period};
 use crate::stock::GetSymbolCode;
-use crate::{deref, Percent};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Bar {
@@ -78,12 +78,36 @@ impl Bar {
     }
 }
 
-deref! {
-    #[derive(Clone, Debug, Default)]
-    pub struct Chart(Vec<Bar>);
+impl Bar {
+    pub fn merge(&mut self, bar: Bar) {
+        self.volume += bar.volume;
+        self.high = self.high.max(bar.high);
+        self.low = self.low.min(bar.low);
+        self.close = bar.close;
+    }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct Chart {
+    items: Vec<Bar>,
+    period: Period,
+}
+
+deref!(Chart, Vec<Bar>, items);
+
 impl Chart {
+    pub fn new(items: Vec<Bar>) -> Self {
+        Self { items, period: Period::Day }
+    }
+
+    pub fn with_period(items: Vec<Bar>, period: Period) -> Self {
+        Self { items, period }
+    }
+
+    pub fn period(&self) -> &Period {
+        &self.period
+    }
+
     pub fn replace_last(&mut self, bar: Bar) {
         if !self.is_empty() {
             let index = self.len() - 1;
@@ -113,15 +137,60 @@ impl Chart {
 
     // skip 设置开始时间
     pub fn offset(&mut self, start_day: &str) {
-        if let Ok(index) = self.binary_search_by_key(&start_day, |d| &d.date) {
-            *self = Self::new(self.0.split_off(index));
+        if let Ok(index) = self.items.binary_search_by_key(&start_day, |d| &d.date) {
+            self.items = self.items.split_off(index);
+        }
+    }
+
+    /// 从后往前保持个数
+    pub fn length(&mut self, length: usize) {
+        if self.items.len() > length {
+            self.items = self.items.split_off(self.items.len() - length);
         }
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ChartParamter {
+    pub period: Period,
+    pub symbol: String,
+    pub end: Option<String>,
+    pub limit: Option<usize>,
+}
+
+impl ChartParamter {
+    pub fn new(symbol: impl GetSymbolCode, period: Period) -> Self {
+        Self { period, symbol: symbol.symbol().to_string(), limit: None, end: None }
+    }
+
+    pub fn day(symbol: impl GetSymbolCode) -> Self {
+        Self::new(symbol, Period::Day)
+    }
+
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    pub fn end(mut self, end: impl ToString) -> Self {
+        self.end = Some(end.to_string());
+        self
+    }
+}
+
+impl<T> From<T> for ChartParamter
+    where T: GetSymbolCode
+{
+    fn from(value: T) -> Self {
+        let symbol = value.symbol();
+        ChartParamter::new(symbol, Period::Day)
+    }
+}
+
+
 #[async_trait::async_trait]
 pub trait ChartLoader {
-    async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart>;
+    async fn chart(&self, param: impl Into<ChartParamter> + Send) -> anyhow::Result<Chart>;
 }
 
 #[async_trait::async_trait]

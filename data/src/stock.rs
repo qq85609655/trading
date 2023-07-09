@@ -72,12 +72,23 @@ pub trait StocksLoader {
     async fn stocks(&self) -> anyhow::Result<Stocks>;
 }
 
+#[async_trait::async_trait]
+impl<T: StocksLoader + std::marker::Sync> StocksLoader for &T {
+    async fn stocks(&self) -> anyhow::Result<Stocks> {
+        self.stocks().await
+    }
+}
+
 deref! {
     #[derive(Debug, Clone)]
     pub struct Stocks(Vec<Stock>);
 }
 
 impl Stocks {
+    pub fn sorted(mut self) -> Self {
+        self.0.sort_by(|a,b|a.symbol.cmp(&b.symbol));
+        self
+    }
     /// 加载的列表进行过了
     pub fn filter(mut self, filter: Option<String>) -> Self {
         let Some(filter) = filter else {

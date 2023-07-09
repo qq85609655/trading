@@ -48,5 +48,10 @@ macro_rules! deref {
                 &mut self.$field
             }
         }
+        impl $T {
+            pub fn value(self) -> $child {
+                self.$field
+            }
+        }
     }
 }

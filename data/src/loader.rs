@@ -4,12 +4,16 @@
 pub mod local {
     use std::collections::HashMap;
     use std::fmt::Write;
+    use std::ops::{Add};
     use std::path::{Path, PathBuf};
+    use std::str::FromStr;
 
-    use anyhow::Context;
+    use anyhow::{bail, Context};
+    use tracing::log::debug;
+    use tracing::trace;
 
+    use crate::{Bar, BarLoader, Chart, ChartLoader, ChartParamter, MarketCurrentLoader, Period, Stock, Stocks, StocksLoader, TradingDay};
     use crate::stock::GetSymbolCode;
-    use crate::{Bar, BarLoader, Chart, ChartLoader, MarketCurrentLoader, Stock, Stocks, StocksLoader};
 
     pub fn data_dir() -> anyhow::Result<PathBuf> {
         let dir = dirs::data_local_dir().ok_or(anyhow::anyhow!("data local dir not found"))?;
@@ -37,7 +41,7 @@ pub mod local {
             let name = it.next().context("can't found stock name")?;
             stocks.push(Stock::new(name, symbol))
         }
-        Ok(Stocks::new(stocks))
+        Ok(Stocks::new(stocks).sorted())
     }
 
     pub fn write_stocks_data<P: AsRef<Path>>(path: P, stocks: &Stocks) -> anyhow::Result<()> {
@@ -68,10 +72,16 @@ pub mod local {
             Ok(Self { base_dir: path.into() })
         }
 
-        pub fn stock_chart_path(&self, symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
+        pub fn day_chart_path(&self, symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
             let symbol = symbol.symbol();
             let (s1, s2) = (&symbol[..2], &symbol[2..4]);
-            self.storage(format!("stocks/{}/{}/{}.csv", s1, s2, symbol))
+            self.storage(format!("stocks/day/{}/{}/{}.csv", s1, s2, symbol))
+        }
+
+        pub fn minutes_chart_dir(&self, symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
+            let symbol = symbol.symbol();
+            let (s1, s2) = (&symbol[..2], &symbol[2..4]);
+            self.storage(format!("stocks/minutes/{}/{}/{}", s1, s2, symbol))
         }
 
         pub fn stocks_path(&self) -> anyhow::Result<PathBuf> {
@@ -92,17 +102,9 @@ pub mod local {
         }
     }
 
-    #[async_trait::async_trait]
-    impl ChartLoader for LocalLoader {
-        async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart> {
-            let path = self.stock_chart_path(symbol.symbol())?;
-            let content = tokio::fs::read_to_string(&path).await.context(format!(
-                "[{}] read stock chart file: {}",
-                symbol.symbol(),
-                path.display()
-            ))?;
+    impl LocalLoader {
+        fn parse_chart(&self, content: String) -> anyhow::Result<Chart> {
             let lines = content.lines().skip(1);
-
             let mut chart = Chart::default();
             let mut yesterday = 0.0;
             for line in lines.into_iter() {
@@ -110,20 +112,15 @@ pub mod local {
                     continue;
                 }
                 let mut fields = line.split(',');
-                let mut bar = Bar::new(fields.next().context("not found date")?);
+
+                let date = fields.next().context("not found date")?;
+                let mut bar = Bar::new(date);
+
                 bar.open = fields.next().context("not found open")?.parse::<f64>().context("parse open")?;
                 bar.high = fields.next().context("not found high")?.parse::<f64>().context("parse high")?;
                 bar.low = fields.next().context("not found low")?.parse::<f64>().context("parse low")?;
-                bar.close = fields
-                    .next()
-                    .context("not found close")?
-                    .parse::<f64>()
-                    .context("parse close")?;
-                bar.volume = fields
-                    .next()
-                    .context("not found volume")?
-                    .parse::<f64>()
-                    .context("parse volume")?;
+                bar.close = fields.next().context("not found close")?.parse::<f64>().context("parse close")?;
+                bar.volume = fields.next().context("not found volume")?.parse::<f64>().context("parse volume")?;
                 if !bar.is_ok() {
                     continue;
                 }
@@ -132,6 +129,99 @@ pub mod local {
                 chart.push(bar);
             }
             Ok(chart)
+        }
+
+        async fn day_chart(&self, param: ChartParamter) -> anyhow::Result<Chart> {
+            let path = self.day_chart_path(&param.symbol)?;
+            let length = param.limit.unwrap_or(usize::MAX);
+
+            let err = format!("[{}] read stock chart file: {}", param.symbol, path.display());
+            let content = tokio::fs::read_to_string(&path).await.context(err)?;
+
+            let mut chart = self.parse_chart(content)?;
+
+            chart.length(length);
+
+            Ok(chart)
+        }
+
+        async fn week_chart(&self, mut param: ChartParamter) -> anyhow::Result<Chart> {
+            if let Some(end) = &param.end {
+                param.end = Some(TradingDay::from_str(&end)?.week_end_day().to_string());
+            }
+            let limit = std::mem::replace(&mut param.limit, None);
+
+            let output = self.day_chart(param).await?.value();
+            let output = output.into_iter()
+                .map(|mut v| {
+                    v.date = TradingDay::from_str(&v.date).unwrap().week_start_day().to_string();
+                    v
+                })
+                .fold(Vec::default(), |mut acc: Vec<Bar>, bar| {
+                    match acc.last_mut() {
+                        Some(last) if last.date.eq(&bar.date) => {
+                            last.merge(bar);
+                        }
+                        _ => acc.push(bar),
+                    }
+                    acc
+                });
+            let mut chart = Chart::new(output);
+            if let Some(limit) = limit {
+                chart.length(limit);
+            }
+            Ok(chart)
+        }
+
+        async fn minutes_chart(&self, param: ChartParamter) -> anyhow::Result<Chart> {
+            let path = self.minutes_chart_dir(&param.symbol)?;
+            if !path.exists() {
+                return Ok(Chart::default());
+            }
+
+            let Period::Minute(minutes) = param.period.clone() else {
+                unreachable!("!!");
+            };
+
+            let end = TradingDay::trading(param.end.clone())?;
+            let limit = param.limit.unwrap_or((60 / minutes) * 4 * 5);
+            let limit = (limit as f64/ ((60 / minutes) * 4) as f64).ceil() as usize;
+            let mut start = end.clone() - (limit - 1);
+            debug!("start: {}, end: {}", start, end);
+
+            let mut items = vec![];
+
+            while start.le(&end) {
+                let file = path.join(format!("{}.csv",start.to_string()));
+                start = start.add(1);
+
+                if !file.exists() {
+                    if items.len() > 0 {
+                        bail!("invalid minutes day");
+                    }
+                    continue;
+                }
+                trace!("load {:?}", file);
+
+                if let Ok(content) = tokio::fs::read_to_string(file).await {
+                    let mut chart = self.parse_chart(content)?.value();
+                    items.append(&mut chart);
+                }
+            }
+
+            Ok(Chart::with_period(items,Period::Minute(minutes)))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChartLoader for LocalLoader {
+        async fn chart(&self, param: impl Into<ChartParamter> + Send) -> anyhow::Result<Chart> {
+            let param = param.into();
+            match &param.period {
+                Period::Day => self.day_chart(param).await,
+                Period::Week => self.week_chart(param).await,
+                Period::Minute(_) => self.minutes_chart(param).await,
+            }
         }
     }
 
@@ -145,7 +235,7 @@ pub mod local {
     #[async_trait::async_trait]
     impl BarLoader for LocalLoader {
         async fn current(&self, _symbol: impl GetSymbolCode + Send) -> anyhow::Result<Bar> {
-            anyhow::bail!("not suppert")
+            anyhow::bail!("not support")
         }
     }
 
@@ -160,7 +250,7 @@ pub mod local {
             println!("data_dir: {:?}", path);
 
             let loader = LocalLoader::base().unwrap();
-            let path = loader.stock_chart_path("600444").unwrap();
+            let path = loader.day_chart_path("600444").unwrap();
             println!("stock: {:?}", path);
 
             let path = loader.stocks_path().unwrap();
@@ -176,6 +266,40 @@ pub mod local {
             let stocks = stocks.unwrap();
             assert!(stocks.len() > 0, "load chart error");
         }
+
+        #[tokio::test]
+        #[ignore]
+        async fn load_chart() {
+            let loader = LocalLoader::base().unwrap();
+            {
+                let param = ChartParamter::day("601888")
+                    .limit(2).end("2023-07-12");
+                let chart = loader.chart(param).await.unwrap();
+                for bar in chart.iter() {
+                    println!("{}, {},{},{},{}, {}", bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume);
+                }
+            }
+
+            {
+                let param = ChartParamter::new("601888", Period::Week).limit(2);
+                let chart = loader.chart(param).await.unwrap();
+                for bar in chart.iter() {
+                    println!("{}, {},{},{},{}, {}", bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume);
+                }
+            }
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn load_minutes_chart() {
+            let loader = LocalLoader::base().unwrap();
+            let param = ChartParamter::new("601888", Period::Minute(30)).end("2023-07-12");
+            let chart = loader.chart(param).await.unwrap();
+            dbg!(&chart);
+            for bar in chart.iter() {
+                println!("{}, {},{},{},{}, {}", bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume);
+            }
+        }
     }
 }
 
@@ -188,8 +312,8 @@ pub mod remote {
     use reqwest::{header, Method, RequestBuilder, Response};
     use serde::{Deserialize, Serialize};
 
+    use crate::{Bar, BarLoader, Chart, ChartLoader, ChartParamter, MarketCurrentLoader, Stock, Stocks};
     use crate::stock::GetSymbolCode;
-    use crate::{Bar, BarLoader, Chart, ChartLoader, MarketCurrentLoader, Stock, Stocks};
 
     pub mod headers {
         pub const NAME: &str = "x-trading-name";
@@ -533,10 +657,21 @@ pub mod remote {
 
     #[async_trait::async_trait]
     impl ChartLoader for RemoteLoader {
-        async fn chart(&self, symbol: impl GetSymbolCode + Send) -> anyhow::Result<Chart> {
-            let uri = format!("/chart/{}", symbol.symbol());
-            let req = self.request(Method::GET, &uri);
+        async fn chart(&self, param: impl Into<ChartParamter> + Send) -> anyhow::Result<Chart> {
+            let param = param.into();
+            let uri = format!("/chart/{}/{}", param.period.to_string(), &param.symbol);
+
+            let mut params = HashMap::new();
+            if let Some(limit) = &param.limit {
+                params.insert("limit", limit.to_string());
+            }
+            if let Some(end) = &param.end {
+                params.insert("end", end.to_string());
+            }
+
+            let req = self.request(Method::GET, &uri).query(&params);
             let req = self.sign(req, &uri);
+
             let resp = req.send().await?;
             self.is_ok(&resp)?;
             if self.is_json_response(&resp) {
@@ -620,7 +755,8 @@ pub mod remote {
             let loader = RemoteLoader::default()
                 .with_provider(MultiCredentialProvider::default())
                 .unwrap();
-            let chart = loader.chart("601888").await;
+            let param = ChartParamter::day("601888");
+            let chart = loader.chart(param).await;
             assert!(chart.is_ok(), "load chart error");
         }
     }
