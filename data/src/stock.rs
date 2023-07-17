@@ -86,7 +86,7 @@ deref! {
 
 impl Stocks {
     pub fn sorted(mut self) -> Self {
-        self.0.sort_by(|a,b|a.symbol.cmp(&b.symbol));
+        self.0.sort_by(|a, b| a.symbol.cmp(&b.symbol));
         self
     }
     /// 加载的列表进行过了

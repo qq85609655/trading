@@ -4,7 +4,7 @@
 pub mod local {
     use std::collections::HashMap;
     use std::fmt::Write;
-    use std::ops::{Add};
+    use std::ops::Add;
     use std::path::{Path, PathBuf};
     use std::str::FromStr;
 
@@ -12,8 +12,11 @@ pub mod local {
     use tracing::log::debug;
     use tracing::trace;
 
-    use crate::{Bar, BarLoader, Chart, ChartLoader, ChartParamter, MarketCurrentLoader, Period, Stock, Stocks, StocksLoader, TradingDay};
     use crate::stock::GetSymbolCode;
+    use crate::{
+        Bar, BarLoader, Chart, ChartLoader, ChartParamter, MarketCurrentLoader, Period, Stock, Stocks, StocksLoader,
+        TradingDay,
+    };
 
     pub fn data_dir() -> anyhow::Result<PathBuf> {
         let dir = dirs::data_local_dir().ok_or(anyhow::anyhow!("data local dir not found"))?;
@@ -64,12 +67,13 @@ pub mod local {
         }
 
         pub fn new(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
-            let path = path.into();
-            let test_writeable = path.join("test");
-            std::fs::write(&test_writeable, "").context("Failed to write local folder")?;
-            std::fs::remove_file(&test_writeable).context("Failed to remove local folder")?;
-
             Ok(Self { base_dir: path.into() })
+        }
+
+        pub fn test(&self) -> anyhow::Result<()> {
+            let test_writeable = self.base_dir.join("test");
+            std::fs::write(&test_writeable, "").context("Failed to write local folder")?;
+            std::fs::remove_file(&test_writeable).context("Failed to remove local folder")
         }
 
         pub fn day_chart_path(&self, symbol: impl GetSymbolCode) -> anyhow::Result<PathBuf> {
@@ -119,8 +123,16 @@ pub mod local {
                 bar.open = fields.next().context("not found open")?.parse::<f64>().context("parse open")?;
                 bar.high = fields.next().context("not found high")?.parse::<f64>().context("parse high")?;
                 bar.low = fields.next().context("not found low")?.parse::<f64>().context("parse low")?;
-                bar.close = fields.next().context("not found close")?.parse::<f64>().context("parse close")?;
-                bar.volume = fields.next().context("not found volume")?.parse::<f64>().context("parse volume")?;
+                bar.close = fields
+                    .next()
+                    .context("not found close")?
+                    .parse::<f64>()
+                    .context("parse close")?;
+                bar.volume = fields
+                    .next()
+                    .context("not found volume")?
+                    .parse::<f64>()
+                    .context("parse volume")?;
                 if !bar.is_ok() {
                     continue;
                 }
@@ -152,7 +164,8 @@ pub mod local {
             let limit = std::mem::replace(&mut param.limit, None);
 
             let output = self.day_chart(param).await?.value();
-            let output = output.into_iter()
+            let output = output
+                .into_iter()
                 .map(|mut v| {
                     v.date = TradingDay::from_str(&v.date).unwrap().week_start_day().to_string();
                     v
@@ -185,14 +198,14 @@ pub mod local {
 
             let end = TradingDay::trading(param.end.clone())?;
             let limit = param.limit.unwrap_or((60 / minutes) * 4 * 5);
-            let limit = (limit as f64/ ((60 / minutes) * 4) as f64).ceil() as usize;
+            let limit = (limit as f64 / ((60 / minutes) * 4) as f64).ceil() as usize;
             let mut start = end.clone() - (limit - 1);
             debug!("start: {}, end: {}", start, end);
 
             let mut items = vec![];
 
             while start.le(&end) {
-                let file = path.join(format!("{}.csv",start.to_string()));
+                let file = path.join(format!("{}.csv", start.to_string()));
                 start = start.add(1);
 
                 if !file.exists() {
@@ -209,7 +222,7 @@ pub mod local {
                 }
             }
 
-            Ok(Chart::with_period(items,Period::Minute(minutes)))
+            Ok(Chart::with_period(items, Period::Minute(minutes)))
         }
     }
 
@@ -272,11 +285,13 @@ pub mod local {
         async fn load_chart() {
             let loader = LocalLoader::base().unwrap();
             {
-                let param = ChartParamter::day("601888")
-                    .limit(2).end("2023-07-12");
+                let param = ChartParamter::day("601888").limit(2).end("2023-07-12");
                 let chart = loader.chart(param).await.unwrap();
                 for bar in chart.iter() {
-                    println!("{}, {},{},{},{}, {}", bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume);
+                    println!(
+                        "{}, {},{},{},{}, {}",
+                        bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume
+                    );
                 }
             }
 
@@ -284,7 +299,10 @@ pub mod local {
                 let param = ChartParamter::new("601888", Period::Week).limit(2);
                 let chart = loader.chart(param).await.unwrap();
                 for bar in chart.iter() {
-                    println!("{}, {},{},{},{}, {}", bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume);
+                    println!(
+                        "{}, {},{},{},{}, {}",
+                        bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume
+                    );
                 }
             }
         }
@@ -297,7 +315,10 @@ pub mod local {
             let chart = loader.chart(param).await.unwrap();
             dbg!(&chart);
             for bar in chart.iter() {
-                println!("{}, {},{},{},{}, {}", bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume);
+                println!(
+                    "{}, {},{},{},{}, {}",
+                    bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume
+                );
             }
         }
     }
@@ -312,8 +333,8 @@ pub mod remote {
     use reqwest::{header, Method, RequestBuilder, Response};
     use serde::{Deserialize, Serialize};
 
-    use crate::{Bar, BarLoader, Chart, ChartLoader, ChartParamter, MarketCurrentLoader, Stock, Stocks};
     use crate::stock::GetSymbolCode;
+    use crate::{Bar, BarLoader, Chart, ChartLoader, ChartParamter, MarketCurrentLoader, Stock, Stocks};
 
     pub mod headers {
         pub const NAME: &str = "x-trading-name";

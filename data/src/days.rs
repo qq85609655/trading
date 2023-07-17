@@ -4,14 +4,14 @@ use std::ops::{Add, Sub};
 use std::str::FromStr;
 
 use anyhow::{bail, Context};
-use chrono::{Datelike, DateTime, Duration, DurationRound, Local, Timelike, TimeZone};
+use chrono::{DateTime, Datelike, Duration, DurationRound, Local, TimeZone, Timelike};
 
 pub mod holidays {
     use std::cmp::Ordering;
     use std::ops::Add;
 
     use anyhow::{Context, Result};
-    use chrono::{Datelike, DateTime, Duration, Local};
+    use chrono::{DateTime, Datelike, Duration, Local};
     use lazy_static::lazy_static;
 
     pub const FORMAT: &str = "%Y-%m-%d";
@@ -190,7 +190,9 @@ impl FromStr for Period {
             "week" => Ok(Period::Week),
             _ => {
                 if string.ends_with("m") {
-                    Ok(Period::Minute(string[..string.len() - 1].parse::<usize>().context("invaild period value")?))
+                    Ok(Period::Minute(
+                        string[..string.len() - 1].parse::<usize>().context("invaild period value")?,
+                    ))
                 } else {
                     bail!("invaild period value")
                 }
@@ -347,10 +349,12 @@ impl TradingDay {
 
     pub fn month_end_day(&self) -> Self {
         let month = self.date.month();
-        let date = self.date.with_day(1)
-            .map(|v|v.with_month(month + 1))
+        let date = self
+            .date
+            .with_day(1)
+            .map(|v| v.with_month(month + 1))
             .flatten()
-            .map(|v|v.sub(Duration::days(1)) )
+            .map(|v| v.sub(Duration::days(1)))
             .unwrap();
         Self::new(Period::Day, date)
     }
@@ -595,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn test_month(){
+    fn test_month() {
         let day = TradingDay::from_str("2023-05-15").unwrap();
         println!("month start day: {}", day.month_start_day());
         println!("month end day: {}", day.month_end_day());

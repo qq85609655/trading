@@ -1,10 +1,11 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{deref, Percent, Period};
 use crate::stock::GetSymbolCode;
+use crate::{deref, Percent, Period};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Bar {
@@ -37,6 +38,21 @@ impl PartialOrd<Self> for Bar {
 impl Ord for Bar {
     fn cmp(&self, other: &Self) -> Ordering {
         self.date.cmp(&other.date)
+    }
+}
+
+impl Display for Bar {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}({:>6.02},{:>6.02},{:>6.02},{:>6.02},{:>5.02})",
+            self.date,
+            self.open,
+            self.high,
+            self.low,
+            self.close,
+            self.markup()
+        )
     }
 }
 
@@ -179,14 +195,14 @@ impl ChartParamter {
 }
 
 impl<T> From<T> for ChartParamter
-    where T: GetSymbolCode
+where
+    T: GetSymbolCode,
 {
     fn from(value: T) -> Self {
         let symbol = value.symbol();
         ChartParamter::new(symbol, Period::Day)
     }
 }
-
 
 #[async_trait::async_trait]
 pub trait ChartLoader {
