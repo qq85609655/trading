@@ -46,9 +46,9 @@ impl crate::Indicator for Indicator {
             self.items.remove(0);
         }
 
-        let volume = if bar.close > bar.open { bar.volume } else { 0.0 - bar.volume };
-
-        vec![volume, self.items.iter().sum::<f64>() / self.items.len() as f64]
+        let volume = if bar.close >= bar.open { bar.volume } else { 0.0 - bar.volume };
+        let avg = self.items.iter().sum::<f64>() / self.items.len() as f64;
+        vec![volume, avg]
     }
 
     fn reset(&mut self) {
